@@ -134,6 +134,7 @@ class Trainer(object):
             if regularizer[1]:
                 logger.info(f'{regularizer[0]}')
 
+        # train_data的维度为 (序列长度, batchSize)
         self.train_data = utils.batchify(dataset.train,
                                          args.batch_size,
                                          self.cuda)
@@ -151,7 +152,7 @@ class Trainer(object):
                                         args.test_batch_size,
                                         self.cuda)
 
-        self.max_length = self.args.shared_rnn_max_length
+        self.max_length = self.args.shared_rnn_max_length  # 句子长度
 
         if args.use_tensorboard:
             self.tb = TensorBoard(args.model_dir)
@@ -249,10 +250,10 @@ class Trainer(object):
         loss = 0
         for dag in dags:
             output, hidden, extra_out = self.shared(inputs, dag, hidden=hidden)
-            output_flat = output.view(-1, self.dataset.num_tokens)
+            output_flat = output.view(-1, self.dataset.num_tokens)  # (句子长度, batchSize, 词汇个数) -> (句子长度 * batchSize, 词汇个数)
             sample_loss = (self.ce(output_flat, targets) /
                            self.args.shared_num_sample)
-            loss += sample_loss
+            loss += sample_loss  # loss此时是个标量
 
         assert len(dags) == 1, 'there are multiple `hidden` for multple `dags`'
         return loss, hidden, extra_out
@@ -275,10 +276,11 @@ class Trainer(object):
         model.train()
         self.controller.eval()
 
-        hidden = self.shared.init_hidden(self.args.batch_size)
+        hidden = self.shared.init_hidden(self.args.batch_size)  # 初始化隐状态 维度为(batchSize, 隐藏维度)
 
         if max_step is None:
-            max_step = self.args.shared_max_step
+            #max_step = self.args.shared_max_step
+            max_step = 4  # jjq_debug
         else:
             max_step = min(self.args.shared_max_step, max_step)
 
@@ -314,7 +316,7 @@ class Trainer(object):
 
             h1tohT = extra_out['hiddens']
             new_abs_max_hidden_norm = utils.to_item(
-                h1tohT.norm(dim=-1).data.max())
+                h1tohT.norm(dim=-1).data.max())  # 标量 最大的norm
             if new_abs_max_hidden_norm > abs_max_hidden_norm:
                 abs_max_hidden_norm = new_abs_max_hidden_norm
                 logger.info(f'max hidden {abs_max_hidden_norm}')
@@ -390,13 +392,13 @@ class Trainer(object):
         entropy_history = []
         reward_history = []
 
-        hidden = self.shared.init_hidden(self.args.batch_size)
+        hidden = self.shared.init_hidden(self.args.batch_size)  # 隐状态初始为全0 维度为 (batchSize, 隐状态长度)
         total_loss = 0
         valid_idx = 0
-        for step in range(self.args.controller_max_step):
+        for step in range(self.args.controller_max_step):  # 训练2000步
             # sample models
             dags, log_probs, entropies = self.controller.sample(
-                with_details=True)
+                with_details=True)  # log_probs和entropies的维度都为 (2(N-1)+1, ) N是RNN节点的个数
 
             # calculate reward
             np_entropies = entropies.data.cpu().numpy()
@@ -406,7 +408,7 @@ class Trainer(object):
                 rewards, hidden = self.get_reward(dags,
                                                   np_entropies,
                                                   hidden,
-                                                  valid_idx)
+                                                  valid_idx)  # rewards的维度为(2(N-1)+1, ) N是RNN节点的个数
 
             # discount
             if 1 > self.args.discount > 0:
@@ -537,7 +539,7 @@ class Trainer(object):
     def controller_lr(self):
         return self.args.controller_lr
 
-    def get_batch(self, source, idx, length=None, volatile=False):
+    def get_batch(self, source, idx, length=None, volatile=False): # 训练RNN的任务是预测下一个词
         # code from
         # https://github.com/pytorch/examples/blob/master/word_language_model/main.py
         length = min(length if length else self.max_length,

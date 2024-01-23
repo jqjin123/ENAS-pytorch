@@ -142,7 +142,7 @@ class Controller(torch.nn.Module):
         hx, cx = self.lstm(embed, hidden)
         logits = self.decoders[block_idx](hx)
 
-        logits /= self.args.softmax_temperature
+        logits /= self.args.softmax_temperature  # softmax加温度
 
         # exploration
         if self.args.mode == 'train':
@@ -176,14 +176,14 @@ class Controller(torch.nn.Module):
                                           block_idx,
                                           is_embed=(block_idx == 0))
 
-            probs = F.softmax(logits, dim=-1)
+            probs = F.softmax(logits, dim=-1)  # logits的维度 (batchSize, actionSize) 如 (1, 4)
             log_prob = F.log_softmax(logits, dim=-1)
             # TODO(brendan): .mean() for entropy?
             entropy = -(log_prob * probs).sum(1, keepdim=False)
 
-            action = probs.multinomial(num_samples=1).data
+            action = probs.multinomial(num_samples=1).data # 采样一个值, 返回采样后的下标, 默认是不放回采样
             selected_log_prob = log_prob.gather(
-                1, utils.get_variable(action, requires_grad=False))
+                1, utils.get_variable(action, requires_grad=False))  # 动作对应的log_prob
 
             # TODO(brendan): why the [:, 0] here? Should it be .squeeze(), or
             # .view()? Same below with `action`.
@@ -201,8 +201,8 @@ class Controller(torch.nn.Module):
             elif mode == 1:
                 prev_nodes.append(action[:, 0])
 
-        prev_nodes = torch.stack(prev_nodes).transpose(0, 1)
-        activations = torch.stack(activations).transpose(0, 1)
+        prev_nodes = torch.stack(prev_nodes).transpose(0, 1)  # 维度 (1, 11)
+        activations = torch.stack(activations).transpose(0, 1) # 维度 (1, 12)
 
         dags = _construct_dags(prev_nodes,
                                activations,

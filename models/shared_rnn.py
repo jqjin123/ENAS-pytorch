@@ -91,6 +91,7 @@ class EmbeddingDropout(torch.nn.Embedding):
                                                       'and < 1.0')
         self.scale = scale
 
+    # inputs的维度为(batchSize, 序列长度)
     def forward(self, inputs):  # pylint:disable=arguments-differ
         """Embeds `inputs` with the dropped out embedding weight matrix."""
         if self.training:
@@ -99,10 +100,11 @@ class EmbeddingDropout(torch.nn.Embedding):
             dropout = 0
 
         if dropout:
-            mask = self.weight.data.new(self.weight.size(0), 1)
-            mask.bernoulli_(1 - dropout)
-            mask = mask.expand_as(self.weight)
-            mask = mask / (1 - dropout)
+            weight = self.weight  # 维度 (num_embeddings, embedding_dim) 即词汇个数、嵌入维度
+            mask = weight.data.new(self.weight.size(0), 1)  # 维度为 (num_embeddings, 1) 的随机值
+            mask.bernoulli_(1 - dropout)  # mask的每个位置有1-dropout的概率为1 dropout的概率为0
+            mask = mask.expand_as(self.weight)  # 将mask的维度由(num_embeddings, 1)扩展为和self.weight相同的维度 (num_embeddings, embedding_dim)
+            mask = mask / (1 - dropout)  # droup操作把有些值变成0了 这里把没变成0的稍微扩大一些
             masked_weight = self.weight * Variable(mask)
         else:
             masked_weight = self.weight
@@ -122,6 +124,7 @@ class LockedDropout(nn.Module):
     def __init__(self):
         super().__init__()
 
+    # x的维度为(序列长度, batchSize, 词嵌入长度) 如 (35, 64, 1000)
     def forward(self, x, dropout=0.5):
         if not self.training or not dropout:
             return x
@@ -145,7 +148,7 @@ class RNN(models.shared_base.SharedModel):
                                         dropout=args.shared_dropoute)
         self.lockdrop = LockedDropout()
 
-        if self.args.tie_weights:
+        if self.args.tie_weights:  # 输入输出嵌入共享权重
             self.decoder.weight = self.encoder.weight
 
         # NOTE(brendan): Since W^{x, c} and W^{h, c} are always summed, there
@@ -166,7 +169,7 @@ class RNN(models.shared_base.SharedModel):
         self.w_h = collections.defaultdict(dict)
         self.w_c = collections.defaultdict(dict)
 
-        for idx in range(args.num_blocks):
+        for idx in range(args.num_blocks):  # 存储有向无环图的所有边  即建立blocks之间的全连接图
             for jdx in range(idx + 1, args.num_blocks):
                 self.w_h[idx][jdx] = nn.Linear(args.shared_hid,
                                                args.shared_hid,
@@ -212,7 +215,7 @@ class RNN(models.shared_base.SharedModel):
         if hidden is None:
             hidden = self.static_init_hidden[batch_size]
 
-        embed = self.encoder(inputs)
+        embed = self.encoder(inputs)  # embed 的维度为 (句子长度, batchSize, 词嵌入长度)
 
         if self.args.shared_dropouti > 0:
             embed = self.lockdrop(embed,
@@ -230,13 +233,13 @@ class RNN(models.shared_base.SharedModel):
         max_clipped_norm = 0
         h1tohT = []
         logits = []
-        for step in range(time_steps):
-            x_t = embed[step]
-            logit, hidden = self.cell(x_t, hidden, dag)
+        for step in range(time_steps):  # time_steps 即句子长度
+            x_t = embed[step]  # x_t的维度为 (batchSize, 词嵌入长度)
+            logit, hidden = self.cell(x_t, hidden, dag)  # 隐藏状态开始初始化为全0向量 logit的维度为(batchSize, 词嵌入长度) 它是对x_t的预测
 
-            hidden_norms = hidden.norm(dim=-1)
+            hidden_norms = hidden.norm(dim=-1)  # hidden的维度为(batchSize, 隐状态长度)  hidden_norms的维度是(batchSize,)
             max_norm = 25.0
-            if hidden_norms.data.max() > max_norm:
+            if hidden_norms.data.max() > max_norm:  # 将norm过大的batchSize 归一化
                 # TODO(brendan): Just directly use the torch slice operations
                 # in PyTorch v0.4.
                 #
@@ -268,8 +271,8 @@ class RNN(models.shared_base.SharedModel):
                         f'pass. '
                         f'max clipped hidden state norm: {max_clipped_norm}')
 
-        h1tohT = torch.stack(h1tohT)
-        output = torch.stack(logits)
+        h1tohT = torch.stack(h1tohT)  # 输出维度为 (句子长度, batchSize, 词嵌入长度) 如 (35,64,1000)
+        output = torch.stack(logits)  # 输出维度为 (句子长度, batchSize, 词嵌入长度) 如 (35,64,1000)
         raw_output = output
         if self.args.shared_dropout > 0:
             output = self.lockdrop(output,
@@ -279,7 +282,7 @@ class RNN(models.shared_base.SharedModel):
 
         decoded = self.decoder(
             output.view(output.size(0)*output.size(1), output.size(2)))
-        decoded = decoded.view(output.size(0), output.size(1), decoded.size(1))
+        decoded = decoded.view(output.size(0), output.size(1), decoded.size(1))  # decoded的最终维度为 (句子长度, batchSize, 词汇个数)
 
         extra_out = {'dropped': dropped_output,
                      'hiddens': h1tohT,
